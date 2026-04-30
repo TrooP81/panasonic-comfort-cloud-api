@@ -10,7 +10,7 @@ describe("ComfortCloud Tests", () => {
     beforeEach(() => { });
 
     it("should be able to test", () => {
-        expect(true).toBeTruthy;
+        expect(true).toBeTruthy();
     });
     it("should be able to create instance", () => {
         const client = new ComfortCloud("test", "pwd");

@@ -1,7 +1,7 @@
 import * as https from "https";
 import http from 'http';
 import { RequestOptions } from "https";
-import * as url from "url";
+import { URL } from "url";
 import { HttpMethod } from "./models/HttpMethod";
 import { DataMode, OperationMode } from "./models/enums";
 import { Device, DeviceParameters, Group, GroupResponse, DeviceHistory } from "./models/interfaces";
@@ -62,11 +62,11 @@ export class ComfortCloud {
      */
     public async getCcAppVersion(): Promise<string> {
         try {
-            const uri = url.parse(`${this._config.cc_app_url}`, true);
+            const uri = new URL(this._config.cc_app_url);
             const options: RequestOptions = this.getRequestOptions(HttpMethod.Get, uri);
             const response = await this.request(options);
-            const version = response.results[0].version;
-            return version;
+            const version = response?.results?.[0]?.version;
+            if (typeof version === "string" && version.length > 0) return version;
         } catch (error) {
             console.error(error);
         }
@@ -83,7 +83,7 @@ export class ComfortCloud {
         if (!username || !password) throw new Error("Username and password must contain a value.");
         this._ccAppVersion = await this.getCcAppVersion();
         const data = new LoginRequest(username, password);
-        const uri = url.parse(`${this._config.base_url}${this._config.login_url}`, true);
+        const uri = new URL(`${this._config.base_url}${this._config.login_url}`);
         const options: RequestOptions = this.getRequestOptions(HttpMethod.Post, uri);
         const result = await this.request(options, JSON.stringify(data));
         if (result?.uToken) {
@@ -99,7 +99,7 @@ export class ComfortCloud {
      * @returns A list of groups containing list of devices.
      */
     public async getGroups(): Promise<Group[]> {
-        const uri = url.parse(`${this._config.base_url}${this._config.group_url}`, true);
+        const uri = new URL(`${this._config.base_url}${this._config.group_url}`);
         const options: RequestOptions = this.getRequestOptions(HttpMethod.Get, uri);
         const result = await this.request(options);
         if (result?.groupCount > 0) {
@@ -115,7 +115,7 @@ export class ComfortCloud {
      * @returns Device based on deviceId
      */
     public async getDevice(deviceId: string): Promise<Device> {
-        const uri = url.parse(`${this._config.base_url}${this._config.device_url.replace("{guid}", deviceId)}`, true);
+        const uri = new URL(`${this._config.base_url}${this._config.device_url.replace("{guid}", deviceId)}`);
         const options: RequestOptions = this.getRequestOptions(HttpMethod.Get, uri);
         const result = await this.request(options);
         result.deviceGuid = deviceId;
@@ -128,7 +128,7 @@ export class ComfortCloud {
      * @returns Device based on deviceId
      */
     public async getDeviceNow(deviceId: string): Promise<Device> {
-        const uri = url.parse(`${this._config.base_url}${this._config.device_now_url.replace("{guid}", deviceId)}`, true);
+        const uri = new URL(`${this._config.base_url}${this._config.device_now_url.replace("{guid}", deviceId)}`);
         const options: RequestOptions = this.getRequestOptions(HttpMethod.Get, uri);
         const result = await this.request(options);
         result.deviceGuid = deviceId;
@@ -143,7 +143,7 @@ export class ComfortCloud {
      */
     public async setParameters(deviceId: string, parameters: DeviceParameters): Promise<UpdateResponse> {
         try {
-            const uri = url.parse(`${this._config.base_url}${this._config.device_control_url}`, true);
+            const uri = new URL(`${this._config.base_url}${this._config.device_control_url}`);
             const options: RequestOptions = this.getRequestOptions(HttpMethod.Post, uri);
             const requestBody = { deviceGuid: deviceId, parameters: this.getParameters(parameters) };
             const result = await this.request(options, JSON.stringify(requestBody));
@@ -182,7 +182,7 @@ export class ComfortCloud {
     }
 
     public async getDeviceHistory(deviceId: string, dataMode: DataMode = 0, date: string, timezone: string = "+00:00"): Promise<DeviceHistory> {
-        const uri = url.parse(`${this._config.base_url}${this._config.device_history_url}`, true);
+        const uri = new URL(`${this._config.base_url}${this._config.device_history_url}`);
         const options: RequestOptions = this.getRequestOptions(HttpMethod.Post, uri);
         const requestBody = { deviceGuid: deviceId, dataMode: dataMode, date: date,osTimezone: timezone};
         const result = await this.request(options, JSON.stringify(requestBody));
@@ -239,8 +239,12 @@ export class ComfortCloud {
      * @param data optional data to use for request body
      * @returns Promise<any>
      */
+    /**
+     * Request timeout in milliseconds. 0 disables the timeout.
+     */
+    public requestTimeoutMs: number = 15000;
+
     private async request(options: https.RequestOptions, data?: any): Promise<any> {
-        const self = this;
         return await new Promise<any>((resolve, reject) => {
             const client = (options.protocol == "https:") ? https : http;
             try {
@@ -262,17 +266,19 @@ export class ComfortCloud {
                         }
                     });
                 });
+                if (this.requestTimeoutMs > 0) {
+                    req.setTimeout(this.requestTimeoutMs, () => {
+                        req.destroy(new Error(`Request timed out after ${this.requestTimeoutMs}ms`));
+                    });
+                }
                 req.on("error", (e: any) => {
-                    console.error(`problem with request: ${e.message}`);
                     reject(e);
-                    req.destroy();
                 });
                 if (data) {
                     req.write(data);
                 }
                 req.end();
             } catch (error) {
-                console.log(`problem with request: ${error}`);
                 reject(error);
             }
         });
@@ -284,18 +290,19 @@ export class ComfortCloud {
      * @param uri Uri to use
      * @returns An object containing request options
      */
-    private getRequestOptions(method: HttpMethod, uri: url.UrlWithParsedQuery): https.RequestOptions {
+    private getRequestOptions(method: HttpMethod, uri: URL): https.RequestOptions {
+        const path = `${uri.pathname}${uri.search ?? ""}`;
         const requestOptions: https.RequestOptions = {
             host: uri.host,
             port: uri.port,
-            path: uri.path,
+            path: path,
             protocol: uri.protocol,
             method: method,
             headers: {
                 Connection: "Keep-Alive",
                 "Content-Type": "application/json; charset=utf-8",
                 Accept: "application/json; charset=utf-8",
-                Host: uri.hostname as string,
+                Host: uri.hostname,
                 "X-APP-TYPE": 1,
                 "X-APP-VERSION": this._ccAppVersion,
                 "X-APP-NAME": "Comfort Cloud",
@@ -304,11 +311,11 @@ export class ComfortCloud {
                 "User-Agent": "G-RAC",
             },
         };
-    
-        if (this._accessToken !== '42' && requestOptions.headers) {
+
+        if (this._accessToken && requestOptions.headers) {
             requestOptions.headers["X-User-Authorization"] = this._accessToken;
         }
-    
+
         return requestOptions;
     }
 
